@@ -1,0 +1,42 @@
+Using PowerShell remoting, we can seamlessly connect to a remote computer and run commands on it just like we can on our local computer.
+PowerShell remoting is similar to psexec in that manner. Once set up, this functionality works great.
+But you'll soon find it doesn't work so great once you attempt to access network resources from that same remoting session.
+
+To demonstrate, let's say I have three machines: CLIENT1, SRV1, and SRV2 all on the same Active Directory domain.
+On CLIENT1, I run a command on SRV2 using Invoke-Commmand, which uses PowerShell remoting.
+
+PS> Invoke-Command -ComputerName SRV1 -ScriptBlock { "Yay! I'm on the $(hostname) server!" }
+Yay! I'm on the SRV1 server!
+
+That works great, but now let's try to list some files on the SRV2 server where
+I know I have rights to do so from the session on the SRV1 server.
+
+PS> Invoke-Command -ComputerName SRV1 -ScriptBlock { Get-ChildItem -Path \\SRV2\c$ }
+Access is denied
+    + CategoryInfo          : PermissionDenied: (\\SRV2\c$:String) [Get-ChildItem], UnauthorizedAccessException
+    + FullyQualifiedErrorId : ItemExistsUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+    + PSComputerName        : SRV1
+
+Cannot find path '\\SRV2\c$' because it does not exist.
+    + CategoryInfo          : ObjectNotFound: (\\SRV2\c$:String) [Get-ChildItem], ItemNotFoundException
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetChildItemCommand
+    + PSComputerName        : SRV1
+
+It rejected me. The reason is because PowerShell remoting doesn't allow us to pass the credential we inherently used to establish a session with SRV1. When we attempt to connect to SRV2 somehow, it passes no credentials and thus denies us.
+
+If you Google this error, you'll find lots of examples of people "solving" it by using CredSSP. This is supposed to be insecure and also requires additional configuration ahead of time.
+
+I recently discovered a new way to solve this problem that uses session configurations. This "new" way allows you to tie a credential to a PowerShell session configuration and reuse this configuration for all future connections.
+
+To demonstate, let's first connect to SRV1 again but this time register a session configuration on the server using a domain account.
+
+Invoke-Command -ComputerName SRV1 -ScriptBlock { Register-PSSessionConfiguration -Name 4SysOps -RunAsCredential 'domain\mydomainaccount' -Force }
+
+
+It works without CredSSP! At this point, you can continue to use Invoke-Command at will without worrying
+ about the multi-hop problem. Just remember to use the ConfigurationName parameter to specify the configuration
+ you've got running under your domain account! Even better, you could just add that parameter 
+to $PSDefaultParameterValues and have PowerShell automatically use that parameter every time you
+ call Invoke-Command.
+
+more details at :  https://4sysops.com/archives/solve-the-powershell-multi-hop-problem-without-using-credssp/
